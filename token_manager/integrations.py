@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 import subprocess
+import sys
 from typing import Any
 
 import requests
@@ -19,6 +20,17 @@ def _response_error(response: requests.Response) -> str:
     except Exception:
         pass
     return response.text[:300].strip() or f"HTTP {response.status_code}"
+
+
+def _subprocess_silent_kwargs() -> dict[str, Any]:
+    if sys.platform != "win32":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    return {
+        "startupinfo": startupinfo,
+        "creationflags": getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    }
 
 
 def fetch_cpa_accounts(settings: dict[str, Any], proxy_url: str = "") -> list[dict[str, Any]]:
@@ -109,6 +121,7 @@ def import_cpa_accounts_from_docker(settings: dict[str, Any], store, proxy_url: 
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            **_subprocess_silent_kwargs(),
         )
         if proc.returncode != 0:
             failures.append(f"{file_name}: {proc.stderr.strip() or proc.stdout.strip() or 'docker exec 失败'}")
