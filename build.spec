@@ -7,9 +7,21 @@ icon_path = Path(r"I:\\xianyu_op\\openai-token-manager\\build_assets\\openai.ico
 a = Analysis(
     ['main.py'],
     pathex=[str(project_root)],
-    binaries=[],
-    datas=[(r'I:\\xianyu_op\\openai-token-manager\\ico\\openai.png', 'ico')],
+    binaries=[
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\tcl86t.dll', '.'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\tk86t.dll', '.'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\liblzma.dll', '.'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\libbz2.dll', '.'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\ffi-8.dll', '.'),
+    ],
+    datas=[
+        (r'I:\\xianyu_op\\openai-token-manager\\ico\\openai.png', 'ico'),
+        (r'I:\\xianyu_op\\openai-token-manager\\build_assets\\openai.ico', 'build_assets'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\lib\\tcl8.6', '_tcl_data'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\lib\\tk8.6', '_tk_data'),
+    ],
     hiddenimports=[
+        '_tkinter',
         'tkinter',
         'tkinter.ttk',
         'tkinter.scrolledtext',
@@ -18,7 +30,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[r'I:\\xianyu_op\\openai-token-manager\\build_assets\\runtime_hook_tk.py'],
     excludes=[],
     noarchive=False,
 )

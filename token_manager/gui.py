@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 import traceback
@@ -26,6 +27,43 @@ from .log_bus import LogBus
 from .oauth import browser_assisted_authorize, exchange_callback, generate_oauth_start
 from .services import export_record_payloads, refresh_record, run_batch, sync_subscription, upload_record
 from .store import TokenStore
+
+
+def _runtime_base_dir() -> Path:
+    if getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parent.parent
+
+
+def _apply_window_icon(root: tk.Tk) -> None:
+    base_dir = _runtime_base_dir()
+    ico_candidates = [
+        base_dir / "build_assets" / "openai.ico",
+        base_dir / "ico" / "openai.ico",
+    ]
+    png_candidates = [
+        base_dir / "ico" / "openai.png",
+    ]
+
+    for ico_path in ico_candidates:
+        if not ico_path.exists():
+            continue
+        try:
+            root.iconbitmap(default=str(ico_path))
+            return
+        except Exception:
+            pass
+
+    for png_path in png_candidates:
+        if not png_path.exists():
+            continue
+        try:
+            image = tk.PhotoImage(file=str(png_path))
+            root._window_icon_ref = image  # type: ignore[attr-defined]
+            root.iconphoto(True, image)
+            return
+        except Exception:
+            pass
 
 
 class TokenManagerGUI:
@@ -1343,5 +1381,6 @@ CPA 远端:
 
 def run_app() -> None:
     root = tk.Tk()
+    _apply_window_icon(root)
     TokenManagerGUI(root)
     root.mainloop()
