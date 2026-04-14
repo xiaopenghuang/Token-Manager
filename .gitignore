@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Runtime data
+tokens/
+outputs/
+token_manager_config.json
+*.log
+
+# Build artifacts
+build/
+dist/
+build_assets/
+*.spec
+!build.spec
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,48 @@
+{
+  "name": "OpenAI Token Manager",
+  "version": "2.1.0",
+  "description": "个人多账号 OpenAI Token 管理工具 - 支持手动授权、自动授权、刷新、转换、上传和标签显示",
+  "author": "Based on Reverse Engineering",
+  "license": "Personal Use Only",
+  "homepage": "",
+  "requirements": {
+    "python": ">=3.9",
+    "libraries": "requests"
+  },
+  "features": [
+    "图形界面",
+    "手动授权",
+    "自动授权",
+    "批量刷新",
+    "CPA/Sub2API 互转",
+    "批量上传",
+    "代理设置",
+    "订阅标签识别",
+    "日志窗口"
+  ],
+  "changelog": {
+    "2.1.0": {
+      "date": "2026-04-14",
+      "changes": [
+        "重构为模块化结构",
+        "新增浏览器辅助自动授权",
+        "保留手动授权",
+        "新增 CPA 与 Sub2API 互转",
+        "新增批量上传和配置页",
+        "新增全局代理设置",
+        "新增订阅标签显示和日志窗口",
+        "优化刷新和目录扫描性能"
+      ]
+    },
+    "1.0.0": {
+      "date": "2026-03-10",
+      "changes": [
+        "首次发布",
+        "CLI + GUI 双模式",
+        "自动刷新功能",
+        "后台维护模式",
+        "支持打包成独立程序"
+      ]
+    }
+  }
+}
