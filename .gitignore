@@ -20,7 +20,6 @@ build/
 dist/
 build_assets/
 *.spec
-!build.spec
 
 # IDE
 .vscode/

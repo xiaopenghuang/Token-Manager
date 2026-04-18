@@ -19,6 +19,7 @@ TK_RUNTIME_HOOK = BUILD_ASSETS_DIR / "runtime_hook_tk.py"
 SPEC_FILE = PROJECT_ROOT / "build.spec"
 DIST_DIR = PROJECT_ROOT / "dist"
 BUILD_DIR = PROJECT_ROOT / "build"
+DIST_RUNTIME_NAMES = {"tokens", "outputs", "token_manager_config.json"}
 
 
 def project_python() -> str:
@@ -31,6 +32,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clean", action="store_true", help="打包前清理 build/dist")
     parser.add_argument("--console", action="store_true", help="生成带控制台的程序")
     parser.add_argument("--name", default="OpenAI-Token-Manager", help="输出程序名")
+    parser.add_argument("--entry-point", default="main.py", help="打包入口脚本")
+    parser.add_argument("--icon-png", default=str(ICON_PNG), help="图标 PNG 路径")
+    parser.add_argument("--icon-ico", default=str(ICON_ICO), help="生成或使用的 ICO 路径")
     return parser.parse_args()
 
 
@@ -67,12 +71,22 @@ def png_to_ico(png_path: Path, ico_path: Path) -> Path:
     return ico_path
 
 
-def ensure_icon() -> Path:
-    if not ICON_PNG.exists():
-        raise FileNotFoundError(f"未找到图标 PNG: {ICON_PNG}")
-    png_to_ico(ICON_PNG, ICON_ICO)
-    log(f"已生成图标: {ICON_ICO}")
-    return ICON_ICO
+def resolve_icon_paths(icon_png: str, icon_ico: str) -> tuple[Path, Path]:
+    png_path = Path(icon_png).expanduser()
+    if not png_path.is_absolute():
+        png_path = PROJECT_ROOT / png_path
+    ico_path = Path(icon_ico).expanduser()
+    if not ico_path.is_absolute():
+        ico_path = PROJECT_ROOT / ico_path
+    return png_path.resolve(), ico_path.resolve()
+
+
+def ensure_icon(icon_png: Path, icon_ico: Path) -> Path:
+    if not icon_png.exists():
+        raise FileNotFoundError(f"未找到图标 PNG: {icon_png}")
+    png_to_ico(icon_png, icon_ico)
+    log(f"已生成图标: {icon_ico}")
+    return icon_ico
 
 
 def locate_tk_assets() -> dict[str, Path]:
@@ -92,7 +106,15 @@ def locate_tk_assets() -> dict[str, Path]:
 def locate_optional_runtime_dlls() -> list[Path]:
     env_root = Path(sys.executable).resolve().parent
     dll_dir = env_root / "Library" / "bin"
-    names = ["liblzma.dll", "libbz2.dll", "ffi-8.dll"]
+    names = [
+        "liblzma.dll",
+        "libbz2.dll",
+        "ffi-8.dll",
+        "libcrypto-3-x64.dll",
+        "libssl-3-x64.dll",
+        "zlib.dll",
+        "zlib1.dll",
+    ]
     return [dll_dir / name for name in names if (dll_dir / name).exists()]
 
 
@@ -112,6 +134,8 @@ def write_tk_runtime_hook() -> Path:
 
 def render_spec(
     app_name: str,
+    entry_point: str,
+    icon_png: Path,
     console: bool,
     icon_path: Path,
     tk_assets: dict[str, Path],
@@ -119,7 +143,8 @@ def render_spec(
     extra_dlls: list[Path],
 ) -> str:
     icon_literal = str(icon_path).replace("\\", "\\\\")
-    data_png = str(ICON_PNG).replace("\\", "\\\\")
+    data_png = str(icon_png).replace("\\", "\\\\")
+    entry_point_literal = str(entry_point).replace("\\", "\\\\")
     tcl_dll = str(tk_assets["tcl_dll"]).replace("\\", "\\\\")
     tk_dll = str(tk_assets["tk_dll"]).replace("\\", "\\\\")
     tcl_lib = str(tk_assets["tcl_lib"]).replace("\\", "\\\\")
@@ -137,7 +162,7 @@ project_root = Path(SPECPATH)
 icon_path = Path(r"{icon_literal}")
 
 a = Analysis(
-    ['main.py'],
+    [r'{entry_point_literal}'],
     pathex=[str(project_root)],
     binaries=[
         (r'{tcl_dll}', '.'),
@@ -155,7 +180,9 @@ a = Analysis(
         'tkinter.ttk',
         'tkinter.scrolledtext',
         'tkinter.messagebox',
+        'tkinter.filedialog',
         'requests',
+        'websocket',
     ],
     hookspath=[],
     hooksconfig={{}},
@@ -187,6 +214,8 @@ exe = EXE(
 
 def write_spec(
     app_name: str,
+    entry_point: str,
+    icon_png: Path,
     console: bool,
     icon_path: Path,
     tk_assets: dict[str, Path],
@@ -194,7 +223,7 @@ def write_spec(
     extra_dlls: list[Path],
 ) -> Path:
     SPEC_FILE.write_text(
-        render_spec(app_name, console, icon_path, tk_assets, runtime_hook, extra_dlls),
+        render_spec(app_name, entry_point, icon_png, console, icon_path, tk_assets, runtime_hook, extra_dlls),
         encoding="utf-8",
     )
     log(f"已生成 spec: {SPEC_FILE}")
@@ -205,17 +234,28 @@ def clean_dirs() -> None:
     for path in (BUILD_DIR, DIST_DIR, BUILD_ASSETS_DIR):
         if path.exists():
             if path.is_dir():
+                preserve_root_items: set[Path] = set()
+                if path == DIST_DIR:
+                    preserve_root_items = {
+                        path / name
+                        for name in DIST_RUNTIME_NAMES
+                    }
                 for child in sorted(path.glob("**/*"), reverse=True):
+                    if any(root == child or root in child.parents for root in preserve_root_items):
+                        continue
                     if child.is_file():
                         child.unlink()
                 for child in sorted(path.glob("**/*"), reverse=True):
+                    if any(root == child or root in child.parents for root in preserve_root_items):
+                        continue
                     if child.is_dir():
                         try:
                             child.rmdir()
                         except OSError:
                             pass
                 try:
-                    path.rmdir()
+                    if path != DIST_DIR:
+                        path.rmdir()
                 except OSError:
                     pass
             else:
@@ -236,11 +276,12 @@ def main() -> None:
     ensure_pyinstaller()
     if args.clean:
         clean_dirs()
-    icon_path = ensure_icon()
+    icon_png_path, icon_ico_path = resolve_icon_paths(args.icon_png, args.icon_ico)
+    icon_path = ensure_icon(icon_png_path, icon_ico_path)
     tk_assets = locate_tk_assets()
     extra_dlls = locate_optional_runtime_dlls()
     runtime_hook = write_tk_runtime_hook()
-    spec_path = write_spec(args.name, args.console, icon_path, tk_assets, runtime_hook, extra_dlls)
+    spec_path = write_spec(args.name, args.entry_point, icon_png_path, args.console, icon_path, tk_assets, runtime_hook, extra_dlls)
     if args.prepare_only:
         log("已完成准备，不执行打包")
         return

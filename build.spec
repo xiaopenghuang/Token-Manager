@@ -5,7 +5,7 @@ project_root = Path(SPECPATH)
 icon_path = Path(r"I:\\xianyu_op\\openai-token-manager\\build_assets\\openai.ico")
 
 a = Analysis(
-    ['main.py'],
+    [r'main.py'],
     pathex=[str(project_root)],
     binaries=[
         (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\tcl86t.dll', '.'),
@@ -13,6 +13,10 @@ a = Analysis(
         (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\liblzma.dll', '.'),
         (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\libbz2.dll', '.'),
         (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\ffi-8.dll', '.'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\libcrypto-3-x64.dll', '.'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\libssl-3-x64.dll', '.'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\zlib.dll', '.'),
+        (r'G:\\MiniConda3\\envs\\exe_env\\Library\\bin\\zlib1.dll', '.'),
     ],
     datas=[
         (r'I:\\xianyu_op\\openai-token-manager\\ico\\openai.png', 'ico'),
@@ -26,7 +30,9 @@ a = Analysis(
         'tkinter.ttk',
         'tkinter.scrolledtext',
         'tkinter.messagebox',
+        'tkinter.filedialog',
         'requests',
+        'websocket',
     ],
     hookspath=[],
     hooksconfig={},

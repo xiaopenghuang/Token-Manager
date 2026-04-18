@@ -149,7 +149,10 @@ class OAuthCallbackServer:
             def log_message(self, format: str, *args):  # noqa: A003
                 return
 
-        self._server = ThreadingHTTPServer((self.host, self.port), Handler)
+        try:
+            self._server = ThreadingHTTPServer((self.host, self.port), Handler)
+        except OSError as exc:
+            raise RuntimeError(f"无法监听 {self.host}:{self.port}，端口可能被占用: {exc}") from exc
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
 
     def wait(self, timeout: int) -> str:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
+import tempfile
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -43,11 +45,13 @@ def format_rfc3339_from_ts(timestamp: int) -> str:
 def remaining_seconds(expired_at: str) -> int:
     dt = parse_rfc3339(expired_at)
     if dt is None:
-        return 0
+        return -1
     return int((dt - datetime.now(timezone.utc)).total_seconds())
 
 
 def format_time_remaining(seconds: int) -> str:
+    if seconds == -1:
+        return "未知"
     if seconds <= 0:
         return "已过期"
     days = seconds // 86400
@@ -225,3 +229,28 @@ def build_requests_proxies(proxy_url: str) -> dict[str, str] | None:
     if not value:
         return None
     return {"http": value, "https": value}
+
+
+def atomic_write_json(path: Path, data: Any, *, ensure_ascii: bool = False, indent: int = 2) -> None:
+    """Write JSON to *path* atomically: write to a temp file in the same directory, then os.replace."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=str(target.parent), suffix=".tmp", prefix=".~")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, ensure_ascii=ensure_ascii, indent=indent)
+        os.replace(tmp_path, str(target))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    """Convert *value* to int, returning *default* on failure."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default

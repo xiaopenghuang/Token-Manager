@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .utils import (
+    atomic_write_json,
     decode_jwt,
     derive_account_id,
     derive_email,
@@ -28,6 +29,7 @@ class TokenStore:
         self.outputs_dir = Path(str(config.get("outputs_dir") or "")).expanduser()
         self.tokens_dir.mkdir(parents=True, exist_ok=True)
         self.outputs_dir.mkdir(parents=True, exist_ok=True)
+        self._email_path_cache: dict[str, Path] = {}
 
     def all_files(self) -> list[Path]:
         return sorted(self.tokens_dir.rglob("*.json"))
@@ -64,7 +66,7 @@ class TokenStore:
         seconds = remaining_seconds(str(record.get("expired") or ""))
         record["_remaining_seconds"] = seconds
         record["_remaining_text"] = format_time_remaining(seconds)
-        record["_is_expired"] = seconds <= 0
+        record["_is_expired"] = seconds != -1 and seconds <= 0
         record["_filename"] = str(filename or "")
         record["_plan"] = str(((record.get("subscription") or {}).get("plan") or "unknown")).strip()
         return record
@@ -107,12 +109,15 @@ class TokenStore:
         target = self._resolve_path(normalized, source=source)
         target.parent.mkdir(parents=True, exist_ok=True)
         payload = {key: value for key, value in normalized.items() if not str(key).startswith("_")}
-        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_json(target, payload)
         if source and source.resolve() != target.resolve() and source.exists():
             try:
                 source.unlink()
             except Exception:
                 pass
+        email_key = str(normalized.get("email") or "").strip().lower()
+        if email_key:
+            self._email_path_cache[email_key] = target
         return target
 
     def _resolve_path(self, record: dict[str, Any], source: Path | None = None) -> Path:
@@ -139,6 +144,9 @@ class TokenStore:
         target_email = str(email or "").strip().lower()
         if not target_email:
             return None
+        cached = self._email_path_cache.get(target_email)
+        if cached is not None and cached.exists():
+            return cached
         best_path: Path | None = None
         best_key: tuple[float, float, int] | None = None
         for path in self.all_files():
@@ -151,6 +159,8 @@ class TokenStore:
             if best_key is None or sort_key > best_key:
                 best_key = sort_key
                 best_path = path
+        if best_path is not None:
+            self._email_path_cache[target_email] = best_path
         return best_path
 
     def save_token_response(
@@ -183,6 +193,10 @@ class TokenStore:
     def delete(self, filename: str | Path) -> None:
         path = Path(filename)
         if path.exists():
+            record = self.load(path)
+            if record:
+                email_key = str(record.get("email") or "").strip().lower()
+                self._email_path_cache.pop(email_key, None)
             path.unlink()
 
     def organize_existing_records(self) -> int:
@@ -235,6 +249,7 @@ class TokenStore:
                 except Exception:
                     pass
 
+        self._email_path_cache.clear()
         return {
             "kept": kept,
             "removed_files": removed,
@@ -250,8 +265,37 @@ class TokenStore:
             label = "Sub2API"
         export_dir = self._ensure_output_dir(label)
         export_path = export_dir / f"{safe_email_filename(email)}.json"
-        export_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        atomic_write_json(export_path, payload)
         return export_path
+
+    def export_named_payload(self, target: str, filename: str, payload: Any) -> Path:
+        label = str(target or "unknown").strip()
+        if label.lower() == "cpa":
+            label = "CPA"
+        elif label.lower() == "sub2api":
+            label = "Sub2API"
+        export_dir = self._ensure_output_dir(label)
+        export_path = export_dir / str(filename).strip()
+        atomic_write_json(export_path, payload)
+        return export_path
+
+    def cleanup_target_json_files(self, target: str, *, keep_prefixes: tuple[str, ...] = ()) -> int:
+        label = str(target or "unknown").strip()
+        if label.lower() == "cpa":
+            label = "CPA"
+        elif label.lower() == "sub2api":
+            label = "Sub2API"
+        export_dir = self._ensure_output_dir(label)
+        removed = 0
+        for path in export_dir.glob("*.json"):
+            if keep_prefixes and any(path.name.startswith(prefix) for prefix in keep_prefixes):
+                continue
+            try:
+                path.unlink()
+                removed += 1
+            except Exception:
+                pass
+        return removed
 
     def _ensure_output_dir(self, label: str) -> Path:
         desired = self.outputs_dir / label
