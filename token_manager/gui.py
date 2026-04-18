@@ -8,6 +8,7 @@ from typing import Any
 
 import tkinter as tk
 
+from tools.auth_2fa_browser import detect_browser_path
 from .config import load_app_config
 from .constants import APP_NAME, APP_VERSION, DEFAULT_AUTH_TIMEOUT_SECONDS
 from .gui_auth import GUIAuthMixin
@@ -111,7 +112,11 @@ class TokenManagerGUI(
         self.proxy_var = tk.StringVar(value=str(self.config.get("http_proxy") or ""))
         self.refresh_workers_var = tk.IntVar(value=int(self.config.get("refresh_workers") or 6))
         self.upload_workers_var = tk.IntVar(value=int(self.config.get("upload_workers") or 4))
+        auth2fa_mode = str(self.config.get("auth_2fa_mode") or "protocol").strip().lower()
+        self.auth2fa_mode_var = tk.StringVar(value="浏览器链" if auth2fa_mode == "browser" else "协议链")
         self.auth2fa_workers_var = tk.IntVar(value=int(self.config.get("auth_2fa_live_workers") or 3))
+        self.browser_path_var = tk.StringVar(value=str(self.config.get("browser_executable_path") or detect_browser_path() or ""))
+        self.browser_debug_port_var = tk.IntVar(value=int(self.config.get("browser_auth_start_port") or 9333))
         self.auto_interval_var = tk.IntVar(value=int(self.config.get("auto_refresh_interval_seconds") or 60))
         self.auto_threshold_var = tk.IntVar(value=int(self.config.get("auto_refresh_threshold_seconds") or 300))
         self.auto_auth_timeout_var = tk.IntVar(value=int(self.config.get("auto_auth_timeout_seconds") or DEFAULT_AUTH_TIMEOUT_SECONDS))
@@ -151,12 +156,14 @@ class TokenManagerGUI(
         self.upload_target_var = tk.StringVar(value="cpa")
         self.import_source_var = tk.StringVar(value="CPA")
         self.preview_format_var = tk.StringVar(value="CPA")
+        self.auth2fa_mode_hint_var = tk.StringVar(value="")
         self.auth2fa_stats_var = tk.StringVar(value="待授权 0")
         self.auth2fa_output_var = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="就绪")
 
         self._configure_styles()
         self.setup_ui()
+        self.update_auth2fa_mode_hint(announce=False, persist=False)
         self.update_auth2fa_input_stats()
         self.reload_tokens()
         self.poll_logs()

@@ -229,8 +229,11 @@ class GUICommonMixin:
         config["http_proxy"] = self.proxy_var.get().strip()
         config["refresh_workers"] = max(1, min(MAX_REFRESH_WORKERS, _int(self.refresh_workers_var, 6)))
         config["upload_workers"] = max(1, min(MAX_UPLOAD_WORKERS, _int(self.upload_workers_var, 4)))
+        config["auth_2fa_mode"] = "browser" if str(self.auth2fa_mode_var.get() or "").strip() == "浏览器链" else "protocol"
         config["auth_2fa_live_workers"] = max(1, min(MAX_REFRESH_WORKERS, _int(self.auth2fa_workers_var, 3)))
         config["auth_2fa_live_save_token"] = bool(self.auth2fa_save_token_var.get())
+        config["browser_executable_path"] = self.browser_path_var.get().strip()
+        config["browser_auth_start_port"] = max(1024, _int(self.browser_debug_port_var, 9333))
         config["auto_refresh_interval_seconds"] = max(30, _int(self.auto_interval_var, 60))
         config["auto_refresh_threshold_seconds"] = max(30, _int(self.auto_threshold_var, 300))
         config["auto_auth_timeout_seconds"] = max(30, _int(self.auto_auth_timeout_var, DEFAULT_AUTH_TIMEOUT_SECONDS))

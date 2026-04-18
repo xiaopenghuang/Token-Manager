@@ -6,6 +6,7 @@ from pathlib import Path
 
 from tkinter import filedialog, messagebox
 
+from tools.auth_2fa_browser import run_authorize_batch_lines_browser
 from tools.auth_2fa_live import parse_account_lines, run_authorize_batch_lines
 from .constants import DEFAULT_AUTH_TIMEOUT_SECONDS
 from .oauth import browser_assisted_authorize, exchange_callback, generate_oauth_start
@@ -13,6 +14,28 @@ from .services import refresh_record, run_batch
 
 
 class GUIAuthMixin:
+    def update_auth2fa_mode_hint(self, *, announce: bool = True, persist: bool = True) -> None:
+        mode_label = str(self.auth2fa_mode_var.get() or "协议链").strip() or "协议链"
+        if mode_label == "浏览器链":
+            browser_name = Path(str(self.browser_path_var.get() or "").strip()).name
+            port = int(self.browser_debug_port_var.get() or 9333)
+            if browser_name:
+                hint = f"当前模式 浏览器链 已选中 走独立浏览器 端口 {port}  浏览器 {browser_name}"
+            else:
+                hint = "当前模式 浏览器链 已选中 但浏览器路径还没填"
+        else:
+            hint = "当前模式 协议链 已选中 走纯协议授权"
+        self.auth2fa_mode_hint_var.set(hint)
+        self.root.update_idletasks()
+        if persist:
+            self.save_settings(reload_tokens=False, notify=False)
+        if announce:
+            self.status_var.set(f"2FA 模式已切到 {mode_label}")
+            self.log(f"2FA 授权模式已切到 {mode_label}")
+
+    def on_auth2fa_mode_changed(self, _event=None) -> None:
+        self.update_auth2fa_mode_hint(announce=True, persist=True)
+
     def import_auth2fa_accounts_file(self) -> None:
         selected = filedialog.askopenfilename(
             title="选择 2FA 授权账号文件",
@@ -54,19 +77,40 @@ class GUIAuthMixin:
 
         self.save_settings(reload_tokens=False, notify=False)
         settings = self.current_settings()
+        mode = str(settings.get("auth_2fa_mode") or "protocol").strip().lower()
         workers = max(1, int(settings.get("auth_2fa_live_workers") or 1))
         save_token = bool(settings.get("auth_2fa_live_save_token", False))
+        browser_path = str(settings.get("browser_executable_path") or "").strip()
+        browser_debug_port = int(settings.get("browser_auth_start_port") or 9333)
+        timeout = int(settings.get("auto_auth_timeout_seconds") or DEFAULT_AUTH_TIMEOUT_SECONDS)
         output_dir = str((settings.get("outputs_dir") or "")).strip()
-        save_dir = None if not output_dir else str(Path(output_dir).expanduser() / "auth_2fa_live")
+        folder_name = "auth_2fa_browser" if mode == "browser" else "auth_2fa_live"
+        save_dir = None if not output_dir else str(Path(output_dir).expanduser() / folder_name)
 
         def gui_log(message: str) -> None:
             self.log(message)
 
         def progress(done: int, total_count: int, email: str) -> None:
-            self.root.after(0, lambda: self.status_var.set(f"2FA授权 {done}/{total_count} {email}"))
+            prefix = "浏览器授权" if mode == "browser" else "2FA授权"
+            self.root.after(0, lambda: self.status_var.set(f"{prefix} {done}/{total_count} {email}"))
             self.root.after(0, lambda: self.auth2fa_stats_var.set(f"执行中 {done}/{total_count}"))
 
         def worker():
+            if mode == "browser":
+                return run_authorize_batch_lines_browser(
+                    raw_text,
+                    settings,
+                    workers=workers,
+                    browser_path=browser_path,
+                    debug_port_base=browser_debug_port,
+                    timeout=timeout,
+                    save_dir=save_dir,
+                    save_token=save_token,
+                    include_secrets=False,
+                    quiet=True,
+                    log_fn=gui_log,
+                    progress_cb=progress,
+                )
             return run_authorize_batch_lines(
                 raw_text,
                 settings,
@@ -91,11 +135,10 @@ class GUIAuthMixin:
             )
             if save_token and int(result.get("success_count") or 0) > 0:
                 self.reload_tokens(save_first=False)
-            self.log(
-                f"2FA 批量授权完成 成功={int(result.get('success_count') or 0)} 失败={int(result.get('fail_count') or 0)} 无效={int(result.get('input_error_count') or 0)}"
-            )
+            summary_title = "浏览器链批量授权" if mode == "browser" else "2FA 批量授权"
+            self.log(f"{summary_title}完成 成功={int(result.get('success_count') or 0)} 失败={int(result.get('fail_count') or 0)} 无效={int(result.get('input_error_count') or 0)}")
             if summary_path:
-                self.log(f"2FA 批量汇总: {summary_path}")
+                self.log(f"批量汇总: {summary_path}")
             messagebox.showinfo(
                 "完成",
                 f"成功 {int(result.get('success_count') or 0)} 个\n"
@@ -104,7 +147,8 @@ class GUIAuthMixin:
                 f"{summary_path}",
             )
 
-        self.run_background("正在执行 2FA 批量授权", worker, done)
+        status_text = "正在执行浏览器链批量授权" if mode == "browser" else "正在执行 2FA 批量授权"
+        self.run_background(status_text, worker, done)
 
     def generate_manual_url(self) -> None:
         self.save_settings(reload_tokens=False, notify=False)

@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import re
 import sys
-import threading
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -40,8 +39,6 @@ EGRESS_GEO_URL = "https://ipwho.is/"
 LINE_SPLIT_RE = re.compile(r"-{2,}")
 LOGIN_VERIFIER_RE = re.compile(r"https://auth\.openai\.com/api/oauth/oauth2/auth[^\"'\s>]+", re.I)
 META_REFRESH_RE = re.compile(r'content=["\']?\d+;\s*url=([^"\'>\s]+)', re.I)
-_EGRESS_CACHE_LOCK = threading.Lock()
-_EGRESS_CACHE: dict[str, dict[str, Any]] = {}
 
 
 @dataclass(slots=True)
@@ -176,6 +173,8 @@ def _response_entry(step: str, response: Any | None = None, **extra: Any) -> dic
 _STEP_ORDER = {
     "dry_run_totp": "试跑",
     "egress_probe": "准备中",
+    "egress_recheck": "收尾中",
+    "egress_drift": "收尾中",
     "oauth_start": "第1步",
     "sentinel_token": "第2步",
     "authorize_continue": "第3步",
@@ -208,6 +207,22 @@ def _friendly_message(entry: dict[str, Any]) -> str:
         if place:
             return f"{label} 这条线走到 {place} 了"
         return f"{label} 出口已经标记好了"
+    if step == "egress_recheck":
+        egress = _compact_egress_payload(entry.get("egress") or {})
+        place = " / ".join([item for item in (egress.get("country"), egress.get("region"), egress.get("city")) if item])
+        if egress.get("error"):
+            return f"{label} 出口复查没拿到，先按现有链路收尾"
+        if place and egress.get("ip"):
+            return f"{label} 出口复查还是 {place} {egress.get('ip')}"
+        if egress.get("ip"):
+            return f"{label} 出口复查还是 {egress.get('ip')}"
+        return f"{label} 出口复查完成了"
+    if step == "egress_drift":
+        previous = _compact_egress_payload(entry.get("previous_egress") or {})
+        current = _compact_egress_payload(entry.get("egress") or {})
+        previous_text = " / ".join([item for item in (previous.get("country"), previous.get("region"), previous.get("city"), previous.get("ip")) if item]) or "未知出口"
+        current_text = " / ".join([item for item in (current.get("country"), current.get("region"), current.get("city"), current.get("ip")) if item]) or "未知出口"
+        return f"{label} 出口漂了 从 {previous_text} 变成 {current_text}"
     if step == "oauth_start":
         return f"{label} 登录入口已经打开啦"
     if step == "sentinel_token":
@@ -384,6 +399,9 @@ def _save_report(
     token_path: str = "",
     include_secrets: bool = False,
     egress: dict[str, Any] | None = None,
+    egress_start: dict[str, Any] | None = None,
+    egress_end: dict[str, Any] | None = None,
+    egress_drift: bool = False,
 ) -> Path:
     prefix = "auth_2fa_live_fail" if error else "auth_2fa_live"
     report_path = save_dir / f"{prefix}_{_timestamp_slug()}.json"
@@ -394,6 +412,9 @@ def _save_report(
         "start": _start_to_dict(start),
         "account": _sanitize_account_payload(account, include_secrets=include_secrets),
         "egress": _compact_egress_payload(egress or {}),
+        "egress_start": _compact_egress_payload(egress_start or {}),
+        "egress_end": _compact_egress_payload(egress_end or {}),
+        "egress_drift": bool(egress_drift),
         "callback_url": callback_url,
         "token_summary": _token_summary(token_data or {}) if token_data else {},
         "token_data": token_data or {},
@@ -421,6 +442,8 @@ def _save_batch_summary(
     for item in results:
         token_summary = dict(item.get("token_summary") or {})
         egress = _compact_egress_payload(item.get("egress") or {})
+        egress_start = _compact_egress_payload(item.get("egress_start") or {})
+        egress_end = _compact_egress_payload(item.get("egress_end") or {})
         compact_results.append(
             {
                 "ok": bool(item.get("ok")),
@@ -431,6 +454,9 @@ def _save_batch_summary(
                 "account_id": str(token_summary.get("account_id") or ""),
                 "plan": str(token_summary.get("plan") or ""),
                 "egress": egress,
+                "egress_start": egress_start,
+                "egress_end": egress_end,
+                "egress_drift": bool(item.get("egress_drift")),
             }
         )
     payload = {
@@ -452,11 +478,6 @@ def _save_batch_summary(
 
 def _resolve_proxy_egress(proxy_url: str) -> dict[str, Any]:
     cache_key = str(proxy_url or "").strip() or "__direct__"
-    with _EGRESS_CACHE_LOCK:
-        cached = _EGRESS_CACHE.get(cache_key)
-        if cached is not None:
-            return dict(cached)
-
     result: dict[str, Any]
     try:
         response = curl_requests.get(
@@ -503,10 +524,33 @@ def _resolve_proxy_egress(proxy_url: str) -> dict[str, Any]:
             "proxy": cache_key if cache_key != "__direct__" else "",
             "error": str(exc),
         }
-
-    with _EGRESS_CACHE_LOCK:
-        _EGRESS_CACHE[cache_key] = dict(result)
     return result
+
+
+def _select_effective_egress(egress_start: dict[str, Any], egress_end: dict[str, Any]) -> dict[str, Any]:
+    for candidate in (egress_end, egress_start):
+        if any(str(candidate.get(field) or "").strip() for field in ("ip", "country", "region", "city", "timezone", "isp")):
+            return dict(candidate)
+    return dict(egress_end or egress_start or {})
+
+
+def _detect_egress_drift(egress_start: dict[str, Any], egress_end: dict[str, Any]) -> bool:
+    start_ip = str((egress_start or {}).get("ip") or "").strip()
+    end_ip = str((egress_end or {}).get("ip") or "").strip()
+    if start_ip and end_ip:
+        return start_ip != end_ip
+
+    start_key = tuple(
+        str((egress_start or {}).get(field) or "").strip()
+        for field in ("country", "region", "city", "timezone", "isp")
+    )
+    end_key = tuple(
+        str((egress_end or {}).get(field) or "").strip()
+        for field in ("country", "region", "city", "timezone", "isp")
+    )
+    if any(start_key) and any(end_key):
+        return start_key != end_key
+    return False
 
 
 def _fetch_live_totp_code(secret: str, proxy_url: str) -> str:
@@ -667,7 +711,10 @@ def authorize_account(
     proxy_url = str(settings.get("http_proxy") or "")
     logs: list[dict[str, Any]] = []
     start = generate_oauth_start(settings)
-    egress = _resolve_proxy_egress(proxy_url)
+    egress_start = _resolve_proxy_egress(proxy_url)
+    egress_end = dict(egress_start)
+    egress_drift = False
+    egress = _select_effective_egress(egress_start, egress_end)
     callback_url = ""
     token_data: dict[str, Any] | None = None
     token_path = ""
@@ -676,7 +723,7 @@ def authorize_account(
     try:
         _push_log(
             logs,
-            {"step": "egress_probe", "ts": now_rfc3339(), "egress": egress},
+            {"step": "egress_probe", "ts": now_rfc3339(), "egress": egress_start},
             quiet=quiet,
             include_secrets=include_secrets,
             log_fn=log_fn,
@@ -700,6 +747,9 @@ def authorize_account(
                 logs=logs,
                 include_secrets=include_secrets,
                 egress=egress,
+                egress_start=egress_start,
+                egress_end=egress_end,
+                egress_drift=egress_drift,
             )
             return {
                 "ok": True,
@@ -711,6 +761,9 @@ def authorize_account(
                 "token_data": {},
                 "token_summary": {},
                 "egress": egress,
+                "egress_start": egress_start,
+                "egress_end": egress_end,
+                "egress_drift": egress_drift,
                 "totp_code": totp_code if include_secrets else _mask_value(totp_code, prefix=0, suffix=0),
             }
 
@@ -920,6 +973,21 @@ def authorize_account(
             include_secrets=include_secrets,
             log_fn=log_fn,
         )
+        egress_end = _resolve_proxy_egress(proxy_url)
+        egress_drift = _detect_egress_drift(egress_start, egress_end)
+        egress = _select_effective_egress(egress_start, egress_end)
+        _push_log(
+            logs,
+            {
+                "step": "egress_drift" if egress_drift else "egress_recheck",
+                "ts": now_rfc3339(),
+                "egress": egress_end,
+                "previous_egress": egress_start,
+            },
+            quiet=quiet,
+            include_secrets=include_secrets,
+            log_fn=log_fn,
+        )
         token_data = exchange_callback(
             callback_url,
             start,
@@ -943,6 +1011,9 @@ def authorize_account(
             token_path=token_path,
             include_secrets=include_secrets,
             egress=egress,
+            egress_start=egress_start,
+            egress_end=egress_end,
+            egress_drift=egress_drift,
         )
         return {
             "ok": True,
@@ -954,10 +1025,29 @@ def authorize_account(
             "token_data": token_data,
             "token_summary": _token_summary(token_data),
             "egress": egress,
+            "egress_start": egress_start,
+            "egress_end": egress_end,
+            "egress_drift": egress_drift,
             "totp_code": "",
         }
     except Exception as exc:
         _close_session(session)
+        egress_end = _resolve_proxy_egress(proxy_url)
+        egress_drift = _detect_egress_drift(egress_start, egress_end)
+        egress = _select_effective_egress(egress_start, egress_end)
+        if egress_drift:
+            _push_log(
+                logs,
+                {
+                    "step": "egress_drift",
+                    "ts": now_rfc3339(),
+                    "egress": egress_end,
+                    "previous_egress": egress_start,
+                },
+                quiet=quiet,
+                include_secrets=include_secrets,
+                log_fn=log_fn,
+            )
         report_path = _save_report(
             account=account,
             settings=settings,
@@ -970,6 +1060,9 @@ def authorize_account(
             token_path=token_path,
             include_secrets=include_secrets,
             egress=egress,
+            egress_start=egress_start,
+            egress_end=egress_end,
+            egress_drift=egress_drift,
         )
         if callable(log_fn):
             log_fn(f"{account.email} 小翻车了 {exc}")
@@ -986,6 +1079,9 @@ def authorize_account(
             "token_data": token_data or {},
             "token_summary": _token_summary(token_data or {}),
             "egress": egress,
+            "egress_start": egress_start,
+            "egress_end": egress_end,
+            "egress_drift": egress_drift,
             "totp_code": "",
         }
 
